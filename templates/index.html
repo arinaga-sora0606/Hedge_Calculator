@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>マルチアセット・ヘッジ分析ツール</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.6.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.9.0/css/bootstrap-datepicker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <div class="container mt-4">
+        <!-- ヘッダー -->
+        <header class="text-center mb-5">
+            <h2>
+                <i class="fas fa-chart-line mr-2"></i>
+                マルチアセット・ヘッジ分析ツール
+            </h2>
+        </header>
+
+        <!-- フラッシュメッセージ -->
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="alert alert-success alert-dismissible fade show">
+              {% for message in messages %}
+                <p class="mb-0">
+                    <i class="fas fa-check-circle mr-2"></i>
+                    {{ message }}
+                </p>
+              {% endfor %}
+              <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" id="mainForm">
+            <!-- 日付選択と設定操作 -->
+            <div class="form-section">
+                <h4>
+                    <i class="fas fa-calendar-alt mr-2"></i>
+                    日付選択と設定操作
+                </h4>
+                <div class="form-row">
+                    <div class="form-group col-md-6">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="start_date">
+                                    <i class="fas fa-play mr-1"></i>開始日:
+                                </label>
+                                <input type="text" class="form-control datepicker" id="start_date" name="start_date" value="2000-01-01" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="end_date">
+                                    <i class="fas fa-stop mr-1"></i>終了日:
+                                </label>
+                                <input type="text" class="form-control datepicker" id="end_date" name="end_date" value="{{ end_date }}" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group col-md-6">
+                        <div class="settings-panel">
+                            <div class="settings-input mb-2">
+                                <label for="setting_name">
+                                    <i class="fas fa-save mr-1"></i>設定名:
+                                </label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="setting_name" name="setting_name" placeholder="設定名を入力">
+                                    <div class="input-group-append">
+                                        <!-- 設定の保存ボタン -->
+                                        <button type="submit" name="submit_action" value="save" class="btn btn-success">
+                                            <i class="fas fa-save mr-1"></i>保存
+                                        </button>
+                                        <button type="button" class="btn btn-danger" id="delete_setting_btn">
+                                            <i class="fas fa-trash-alt mr-1"></i>削除
+                                        </button>
+                                        <div class="btn-group">
+                                            <button type="button" class="btn btn-primary dropdown-toggle" data-toggle="dropdown">
+                                                <i class="fas fa-folder-open mr-1"></i>ロード
+                                            </button>
+                                            <div class="dropdown-menu">
+                                                {% for setting in settings %}
+                                                    <a class="dropdown-item load-setting" href="#" data-id="{{ setting.id }}">
+                                                        <i class="fas fa-file mr-2"></i>{{ setting.name }}
+                                                    </a>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 隠しフィールドを追加 -->
+                            <input type="hidden" id="loaded_setting_id" name="loaded_setting_id" value="">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 指数選択 -->
+            <div class="form-section">
+                <h4>
+                    <i class="fas fa-chart-bar mr-2"></i>
+                    指数選択
+                </h4>
+                <div class="form-check">
+                    {% for key, value in indices.items() %}
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" id="{{ key }}" name="indices" value="{{ key }}" checked>
+                            <label class="form-check-label" for="{{ key }}">{{ value }}</label>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <!-- コスト設定とレバレッジ・契約サイズ設定 -->
+            <div class="form-section">
+                <h4>
+                    <i class="fas fa-dollar-sign mr-2"></i>
+                    コスト設定とレバレッジ・契約サイズ設定 (USD)
+                </h4>
+                <div class="table-responsive">
+                    <table class="table table-bordered">
+                        <thead class="thead-light">
+                            <tr>
+                                <th>指数</th>
+                                <th>スプレッド</th>
+                                <th>ロングスワップ (USD/日)</th>
+                                <th>ショートスワップ (USD/日)</th>
+                                <th>レバレッジ</th>
+                                <th>契約サイズ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for asset in ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX'] %}
+                                <tr>
+                                    <td>{{ asset }}</td>
+                                    <td>
+                                        <input type="number" step="0.01" name="spread" class="form-control" value="0">
+                                    </td>
+                                    <td>
+                                        <input type="number" step="0.01" name="swap_long" class="form-control" value="0">
+                                    </td>
+                                    <td>
+                                        <input type="number" step="0.01" name="swap_short" class="form-control" value="0">
+                                    </td>
+                                    <td>
+                                        <input type="number" step="1" name="leverage_{{ asset }}" class="form-control" value="{{ leverage.get(asset, 200) }}" required>
+                                    </td>
+                                    <td>
+                                        <input type="number" step="1" name="contract_size_{{ asset }}" class="form-control" value="{{ contract_size.get(asset, 1) }}" required>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <small class="form-text text-muted">
+                    <ul class="mb-0">
+                        <li>レバレッジはユーザーが任意に設定可能です。</li>
+                        <li>契約サイズはユーザーが任意に設定可能です。</li>
+                        <li>VIXのレバレッジはデフォルトで100倍、契約サイズは100に設定されています。</li>
+                    </ul>
+                </small>
+            </div>
+
+            <!-- 投資シミュレーション2設定 -->
+            <div class="form-section">
+                <h4>
+                    <i class="fas fa-cog mr-2"></i>
+                    投資シミュレーション2設定
+                </h4>
+                <div class="form-row">
+                    <div class="form-group col-md-4">
+                        <label for="initial_margin">
+                            <i class="fas fa-money-bill-wave mr-1"></i>初期証拠金 (USD):
+                        </label>
+                        <input type="number" step="0.01" class="form-control" id="initial_margin" name="initial_margin" value="2000" required>
+                    </div>
+                    <div class="form-group col-md-4">
+                        <label for="min_lot">
+                            <i class="fas fa-arrow-down mr-1"></i>最小ロットサイズ:
+                        </label>
+                        <input type="number" step="0.01" class="form-control" id="min_lot" name="min_lot" value="0.10" required>
+                    </div>
+                    <div class="form-group col-md-4">
+                        <label for="max_lot">
+                            <i class="fas fa-arrow-up mr-1"></i>最大ロットサイズ:
+                        </label>
+                        <input type="number" step="0.01" class="form-control" id="max_lot" name="max_lot" value="0.15" required>
+                    </div>
+                </div>
+
+                <div class="form-row mt-3">
+                    <div class="form-group col-md-6">
+                        <label for="handle_small_hedge">
+                            <i class="fas fa-balance-scale mr-1"></i>ヘッジロットサイズ &lt; 0.10 の処理:
+                        </label>
+                        <select class="form-control" id="handle_small_hedge" name="handle_small_hedge">
+                            <option value="none">なし</option>
+                            <option value="short" selected>ショート</option>
+                        </select>
+                    </div>
+                    <div class="form-group col-md-6">
+                        <label for="settlement_frequency">
+                            <i class="fas fa-clock mr-1"></i>ポジション決済頻度:
+                        </label>
+                        <select class="form-control" id="settlement_frequency" name="settlement_frequency">
+                            <option value="quarterly">四半期ごと</option>
+                            <option value="monthly" selected>月ごと</option>
+                        </select>
+                    </div>
+                </div>
+
+                <small class="form-text text-muted">
+                    <ul class="mb-0">
+                        <li>レバレッジはVIXは100倍、その他の指数はユーザーが設定した値を使用します。</li>
+                        <li>契約サイズはユーザーが設定した値を使用します。</li>
+                        <li>最低ロットサイズは0.10で、0.01ずつ増加します。</li>
+                        <li>ヘッジ比率が0.10未満の場合、選択に応じて処理します。</li>
+                        <li>ポジションは四半期ごとまたは月ごとに決済します。</li>
+                    </ul>
+                </small>
+            </div>
+            
+            <!-- 計算期間 -->
+            <div class="form-section">
+                <h4>
+                    <i class="fas fa-hourglass-half mr-2"></i>
+                    計算期間
+                </h4>
+                <select class="form-control" name="period" required>
+                    <option value="30日">30日</option>
+                    <option value="3か月" selected>3か月</option>
+                    <option value="半年">半年</option>
+                    <option value="1年">1年</option>
+                </select>
+            </div>
+            
+            <!-- 最適化設定 -->
+            <div class="form-section">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="optimize_weights" name="optimize_weights" checked>
+                    <label class="form-check-label" for="optimize_weights">
+                        <i class="fas fa-magic mr-2"></i>
+                        動的ウェイト最適化を使用
+                    </label>
+                </div>
+            </div>
+            
+            <!-- 実行ボタン -->
+            <div class="form-actions">
+                <button type="submit" name="submit_action" value="analyze" class="btn btn-success btn-lg btn-block">
+                    <span class="spinner-border spinner-border-sm mr-2 d-none" role="status" aria-hidden="true"></span>
+                    <i class="fas fa-play-circle mr-2"></i>
+                    分析とシミュレーションを実行
+                </button>
+            </div>
+            
+            <!-- ログ表示セクション -->
+            <div class="form-section log-section">
+                <h4>
+                    <i class="fas fa-terminal mr-2"></i>
+                    実行ログ
+                </h4>
+                <div class="log-container">
+                    <div id="log-content" class="log-content">
+                        {% with messages = get_flashed_messages() %}
+                          {% if messages %}
+                            {% for message in messages %}
+                              <p>
+                                <i class="fas fa-info-circle mr-2"></i>
+                                {{ message }}
+                              </p>
+                            {% endfor %}
+                          {% endif %}
+                        {% endwith %}
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.16.1/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.6.2/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.9.0/js/bootstrap-datepicker.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>
