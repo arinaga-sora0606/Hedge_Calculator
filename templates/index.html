@@ -9,6 +9,30 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.9.0/css/bootstrap-datepicker.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        /* スマホやタブレットに対応するためのカスタムメディアクエリ */
+        @media (max-width: 767px) {
+            .form-section h4 {
+                font-size: 1.2rem;
+            }
+            .log-container {
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            .form-actions button {
+                font-size: 0.9rem;
+                padding: 12px;
+            }
+        }
+        @media (max-width: 576px) {
+            .form-check-label {
+                font-size: 0.9rem;
+            }
+            .input-group-text, .form-control {
+                font-size: 0.9rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container mt-4">
@@ -45,7 +69,7 @@
                     日付選択と設定操作
                 </h4>
                 <div class="form-row">
-                    <div class="form-group col-md-6">
+                    <div class="form-group col-md-6 col-12">
                         <div class="row">
                             <div class="col-md-6">
                                 <label for="start_date">
@@ -62,7 +86,7 @@
                         </div>
                     </div>
 
-                    <div class="form-group col-md-6">
+                    <div class="form-group col-md-6 col-12">
                         <div class="settings-panel">
                             <div class="settings-input mb-2">
                                 <label for="setting_name">
@@ -99,7 +123,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 指数選択 -->
             <div class="form-section">
                 <h4>
@@ -115,7 +139,7 @@
                     {% endfor %}
                 </div>
             </div>
-            
+
             <!-- コスト設定とレバレッジ・契約サイズ設定 -->
             <div class="form-section">
                 <h4>
@@ -174,19 +198,19 @@
                     投資シミュレーション2設定
                 </h4>
                 <div class="form-row">
-                    <div class="form-group col-md-4">
+                    <div class="form-group col-md-4 col-12">
                         <label for="initial_margin">
                             <i class="fas fa-money-bill-wave mr-1"></i>初期証拠金 (USD):
                         </label>
                         <input type="number" step="0.01" class="form-control" id="initial_margin" name="initial_margin" value="2000" required>
                     </div>
-                    <div class="form-group col-md-4">
+                    <div class="form-group col-md-4 col-12">
                         <label for="min_lot">
                             <i class="fas fa-arrow-down mr-1"></i>最小ロットサイズ:
                         </label>
                         <input type="number" step="0.01" class="form-control" id="min_lot" name="min_lot" value="0.10" required>
                     </div>
-                    <div class="form-group col-md-4">
+                    <div class="form-group col-md-4 col-12">
                         <label for="max_lot">
                             <i class="fas fa-arrow-up mr-1"></i>最大ロットサイズ:
                         </label>
@@ -195,7 +219,7 @@
                 </div>
 
                 <div class="form-row mt-3">
-                    <div class="form-group col-md-6">
+                    <div class="form-group col-md-6 col-12">
                         <label for="handle_small_hedge">
                             <i class="fas fa-balance-scale mr-1"></i>ヘッジロットサイズ &lt; 0.10 の処理:
                         </label>
@@ -204,7 +228,7 @@
                             <option value="short" selected>ショート</option>
                         </select>
                     </div>
-                    <div class="form-group col-md-6">
+                    <div class="form-group col-md-6 col-12">
                         <label for="settlement_frequency">
                             <i class="fas fa-clock mr-1"></i>ポジション決済頻度:
                         </label>
@@ -225,7 +249,7 @@
                     </ul>
                 </small>
             </div>
-            
+
             <!-- 計算期間 -->
             <div class="form-section">
                 <h4>
@@ -239,7 +263,7 @@
                     <option value="1年">1年</option>
                 </select>
             </div>
-            
+
             <!-- 最適化設定 -->
             <div class="form-section">
                 <div class="form-check">
@@ -250,7 +274,7 @@
                     </label>
                 </div>
             </div>
-            
+
             <!-- 実行ボタン -->
             <div class="form-actions">
                 <button type="submit" name="submit_action" value="analyze" class="btn btn-success btn-lg btn-block">
@@ -259,7 +283,7 @@
                     分析とシミュレーションを実行
                 </button>
             </div>
-            
+
             <!-- ログ表示セクション -->
             <div class="form-section log-section">
                 <h4>
