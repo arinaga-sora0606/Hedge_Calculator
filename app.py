@@ -67,7 +67,7 @@ def login_required(f):
     return decorated_function
 
 # 日本語フォント設定
-rc('font', family='TakaoPGothic') 
+rc('font', family='MS Gothic')
 
 
 # データベースモデル
@@ -300,31 +300,16 @@ def calculate_drawdowns(cum_returns):
     return max_drawdowns, relative_drawdowns, absolute_drawdowns
 
 def investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settlement_frequency, save_directory):
-    # ロットサイズの乗数設定
-    lot_size_multiplier = {
-        'SP500': 1,
-        'Nikkei': 1,
-        'EuroStoxx': 1,
-        'FTSE': 1,
-        'DowJones': 1,
-        'AUS200': 1,
-        'HK50': 1,
-        'SMI20': 1,
-        'VIX': 100  # VIXは1ロットあたり100指数
-    }
-
-    # レバレッジ設定はユーザー入力から取得（デフォルトは200）
-    leverage = {
-        'SP500': 200,
-        'Nikkei': 200,
-        'EuroStoxx': 200,
-        'FTSE': 200,
-        'DowJones': 200,
-        'AUS200': 200,
-        'HK50': 200,
-        'SMI20': 200,
-        'VIX': 100  # VIXのレバレッジを100倍に設定
-    }
+    # ユーザーが設定したレバレッジと契約サイズを使用
+    leverage = costs['leverage']
+    contract_size = costs['contract_size']
+    
+    # コストをUSDに変換
+    spreads_usd = {asset: value / usdjpy_rate for asset, value in costs['spreads'].items()}
+    swaps_long_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_long'].items()}
+    swaps_short_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_short'].items()}
+    
+    # 以下、既存のコードは同じ
     
     # コストをUSDに変換
     spreads_usd = {asset: value / usdjpy_rate for asset, value in costs['spreads'].items()}
@@ -488,31 +473,14 @@ def investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settleme
     performance_metrics.to_csv(os.path.join(save_directory, f"{settlement_frequency}_performance_metrics.csv"), index=False)
 
 def investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min_lot, max_lot, handle_small_hedge, settlement_frequency, save_directory, update_log):
-    # レバレッジ設定はユーザー入力から取得（デフォルトは200）
-    leverage = {
-        'SP500': 200,
-        'Nikkei': 200,
-        'EuroStoxx': 200,
-        'FTSE': 200,
-        'DowJones': 200,
-        'AUS200': 200,
-        'HK50': 200,
-        'SMI20': 200,
-        'VIX': 100  # VIXのレバレッジを100倍に設定
-    }
+    # ユーザーが設定したレバレッジと契約サイズを使用
+    leverage = costs['leverage']
+    lot_size_multiplier = costs['contract_size']  # contract_sizeをlot_size_multiplierとして使用
     
-    # ロットサイズの乗数設定
-    lot_size_multiplier = {
-        'SP500': 1,
-        'Nikkei': 1,
-        'EuroStoxx': 1,
-        'FTSE': 1,
-        'DowJones': 1,
-        'AUS200': 1,
-        'HK50': 1,
-        'SMI20': 1,
-        'VIX': 100  # VIXは1ロットあたり100指数
-    }
+    # スプレッドとスワップコスト
+    spreads = costs['spreads']
+    swaps_long = costs['swaps_long'] 
+    swaps_short = costs['swaps_short']
     
     # スプレッドとスワップコスト
     spreads = costs['spreads']
@@ -848,30 +816,28 @@ def index():
                 costs = {
                     'spreads': {},
                     'swaps_long': {},
-                    'swaps_short': {}
+                    'swaps_short': {},
+                    'leverage': {},
+                    'contract_size': {}
                 }
+
                 for i, asset in enumerate(asset_names):
                     try:
                         costs['spreads'][asset] = float(costs_spread[i])
-                    except (IndexError, ValueError):
-                        costs['spreads'][asset] = 0.0
-                    try:
                         costs['swaps_long'][asset] = float(costs_swaps_long[i])
-                    except (IndexError, ValueError):
-                        costs['swaps_long'][asset] = 0.0
-                    try:
                         costs['swaps_short'][asset] = float(costs_swaps_short[i])
                     except (IndexError, ValueError):
+                        costs['spreads'][asset] = 0.0
+                        costs['swaps_long'][asset] = 0.0
                         costs['swaps_short'][asset] = 0.0
 
-                # レバレッジと契約サイズの取得
-                leverage = {}
-                contract_size = {}
-                for asset in asset_names:
-                    leverage_input = request.form.get(f'leverage_{asset}', '200') if asset != 'VIX' else request.form.get(f'leverage_{asset}', '100')
-                    contract_size_input = request.form.get(f'contract_size_{asset}', '1') if asset != 'VIX' else request.form.get(f'contract_size_{asset}', '100')
-                    leverage[asset] = float(leverage_input)
-                    contract_size[asset] = float(contract_size_input)
+                    try:
+                        costs['leverage'][asset] = float(request.form.get(f'leverage_{asset}'))
+                        costs['contract_size'][asset] = float(request.form.get(f'contract_size_{asset}'))
+                    except (TypeError, ValueError):
+                        flash(f'{asset}のレバレッジまたは契約サイズが無効です。デフォルト値を使用します。')
+                        costs['leverage'][asset] = 200.0 if asset != 'VIX' else 100.0
+                        costs['contract_size'][asset] = 1.0 if asset != 'VIX' else 100.0
 
                 existing_setting = UserSetting.query.filter_by(name=setting_name).first()
                 if existing_setting:
@@ -887,8 +853,8 @@ def index():
                     existing_setting.handle_small_hedge = handle_small_hedge
                     existing_setting.settlement_frequency = settlement_frequency
                     existing_setting.optimize_weights = optimize_weights_flag
-                    existing_setting.leverage = ','.join([str(leverage[asset]) for asset in asset_names])
-                    existing_setting.contract_size = ','.join([str(contract_size[asset]) for asset in asset_names])
+                    existing_setting.leverage = ','.join([str(costs['leverage'][asset]) for asset in asset_names])
+                    existing_setting.contract_size = ','.join([str(costs['contract_size'][asset]) for asset in asset_names])
                 else:
                     new_setting = UserSetting(
                         name=setting_name,
@@ -904,8 +870,8 @@ def index():
                         handle_small_hedge=handle_small_hedge,
                         settlement_frequency=settlement_frequency,
                         optimize_weights=optimize_weights_flag,
-                        leverage=','.join([str(leverage[asset]) for asset in asset_names]),
-                        contract_size=','.join([str(contract_size[asset]) for asset in asset_names])
+                        leverage=','.join([str(costs['leverage'][asset]) for asset in asset_names]),
+                        contract_size=','.join([str(costs['contract_size'][asset]) for asset in asset_names])
                     )
                     db.session.add(new_setting)
                 db.session.commit()
@@ -938,48 +904,28 @@ def index():
                 costs = {
                     'spreads': {},
                     'swaps_long': {},
-                    'swaps_short': {}
+                    'swaps_short': {},
+                    'leverage': {},
+                    'contract_size': {}
                 }
+
                 for i, asset in enumerate(asset_names):
                     try:
                         costs['spreads'][asset] = float(costs_spread[i])
-                    except (IndexError, ValueError):
-                        costs['spreads'][asset] = 0.0
-                    try:
                         costs['swaps_long'][asset] = float(costs_swaps_long[i])
-                    except (IndexError, ValueError):
-                        costs['swaps_long'][asset] = 0.0
-                    try:
                         costs['swaps_short'][asset] = float(costs_swaps_short[i])
                     except (IndexError, ValueError):
+                        costs['spreads'][asset] = 0.0
+                        costs['swaps_long'][asset] = 0.0
                         costs['swaps_short'][asset] = 0.0
 
-                # レバレッジと契約サイズの取得
-                leverage = {}
-                contract_size = {}
-                for asset in asset_names:
-                    leverage_input = request.form.get(f'leverage_{asset}', '200') if asset != 'VIX' else request.form.get(f'leverage_{asset}', '100')
-                    contract_size_input = request.form.get(f'contract_size_{asset}', '1') if asset != 'VIX' else request.form.get(f'contract_size_{asset}', '100')
-                    leverage[asset] = float(leverage_input)
-                    contract_size[asset] = float(contract_size_input)
-
-                # 出力ディレクトリ内の既存ファイルを削除
-                save_directory = OUTPUT_FOLDER
-                for f in os.listdir(save_directory):
-                    file_path = os.path.join(save_directory, f)
                     try:
-                        if os.path.isfile(file_path):
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            # サブディレクトリも削除
-                            for sub_file in os.listdir(file_path):
-                                sub_file_path = os.path.join(file_path, sub_file)
-                                if os.path.isfile(sub_file_path):
-                                    os.unlink(sub_file_path)
-                            os.rmdir(file_path)
-                    except Exception as e:
-                        socketio.emit('log', {'message': f"ファイル削除に失敗しました: {file_path}. 理由: {e}"})
-                        return jsonify({'error': str(e)}), 500
+                        costs['leverage'][asset] = float(request.form.get(f'leverage_{asset}'))
+                        costs['contract_size'][asset] = float(request.form.get(f'contract_size_{asset}'))
+                    except (TypeError, ValueError):
+                        flash(f'{asset}のレバレッジまたは契約サイズが無効です。デフォルト値を使用します。')
+                        costs['leverage'][asset] = 200.0 if asset != 'VIX' else 100.0
+                        costs['contract_size'][asset] = 1.0 if asset != 'VIX' else 100.0
 
                 socketio.emit('log', {'message': 'データの取得を開始します...'})
                 price_data, returns, usdjpy_rate = get_data(start_date, end_date)
@@ -989,7 +935,7 @@ def index():
                     return jsonify({'error': 'データ取得に失敗しました'}), 500
 
                 socketio.emit('log', {'message': '相関行列のプロットを作成します...'})
-                plot_correlation_matrix(returns, save_directory)
+                plot_correlation_matrix(returns, OUTPUT_FOLDER)
 
                 period_mapping = {
                     '30日': 30,
@@ -1001,20 +947,20 @@ def index():
 
                 socketio.emit('log', {'message': 'ヘッジ比率の計算を開始します...'})
                 selected_assets = {asset: (asset in selected_indices) for asset in ['Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX']}
-                hedge_ratios = calculate_hedge_ratios(returns, lookback_days, optimize_weights_flag, selected_assets, save_directory)
+                hedge_ratios = calculate_hedge_ratios(returns, lookback_days, optimize_weights_flag, selected_assets, OUTPUT_FOLDER)
 
                 socketio.emit('log', {'message': 'ヘッジ比率のプロットを作成します...'})
-                plot_hedge_ratios(hedge_ratios, save_directory)
+                plot_hedge_ratios(hedge_ratios, OUTPUT_FOLDER)
 
                 socketio.emit('log', {'message': '投資シミュレーション1を開始します...'})
-                investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settlement_frequency, save_directory)
+                investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settlement_frequency, OUTPUT_FOLDER)
 
                 def log_callback(message):
                     socketio.emit('log', {'message': message})
 
                 socketio.emit('log', {'message': '投資シミュレーション2を開始します...'})
                 investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min_lot, max_lot, 
-                                     handle_small_hedge, settlement_frequency, save_directory, log_callback)
+                                     handle_small_hedge, settlement_frequency, OUTPUT_FOLDER, log_callback)
 
                 socketio.emit('log', {'message': '分析とシミュレーションが完了しました。'})
                 return jsonify({'redirect': url_for('results')})
@@ -1030,7 +976,6 @@ def index():
 
     settings = UserSetting.query.all()
     indices = create_index_selection_frame()
-    # レバレッジと契約サイズを辞書に変換
     leverage = {}
     contract_size = {}
     for setting in settings:
@@ -1200,10 +1145,6 @@ def handle_analysis(data):
        emit('analysis_error', {'error': str(e)}, namespace='/analysis')
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    socketio.run(app, debug=True)
-
     with app.app_context():
         db.create_all()
     socketio.run(app, debug=True)
