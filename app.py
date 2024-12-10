@@ -67,7 +67,7 @@ def login_required(f):
     return decorated_function
 
 # 日本語フォント設定
-rc('font', family='MS Gothic')
+rc('font', family='TakaoPGothic') 
 
 
 # データベースモデル
