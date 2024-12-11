@@ -3,27 +3,27 @@ import math
 import traceback
 from functools import wraps
 from datetime import datetime, timedelta
-
-import numpy as np
 import pandas as pd
-import seaborn as sns
-import statsmodels.api as sm
+import numpy as np
 import yfinance as yf
-from dotenv import load_dotenv
-from flask import (Flask, jsonify, redirect, render_template, request,
-                   session, url_for, flash, send_file)
-from flask_bootstrap import Bootstrap
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
-from matplotlib import rc
+import statsmodels.api as sm
+import seaborn as sns
 import matplotlib
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from werkzeug.security import check_password_hash
 import zipfile
 from io import BytesIO
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_file
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from flask_bootstrap import Bootstrap
+from dotenv import load_dotenv
+import shutil
 from flask_socketio import SocketIO, emit
 import eventlet
+import gc
+from user_agents import parse
 
 # **Matplotlibのバックエンドを'Agg'に設定（GUI不要）**
 matplotlib.use('Agg')
@@ -67,8 +67,7 @@ def login_required(f):
     return decorated_function
 
 # 日本語フォント設定
-rc('font', family='TakaoPGothic') 
-
+matplotlib.rc('font', family='TakaoPGothic')
 
 # データベースモデル
 class UserSetting(db.Model):
@@ -86,8 +85,8 @@ class UserSetting(db.Model):
     handle_small_hedge = db.Column(db.String(10), nullable=False)
     settlement_frequency = db.Column(db.String(10), nullable=False)
     optimize_weights = db.Column(db.Boolean, nullable=False)
-    leverage = db.Column(db.String(500), nullable=False)  # 追加
-    contract_size = db.Column(db.String(500), nullable=False)  # 追加
+    leverage = db.Column(db.String(500), nullable=False)
+    contract_size = db.Column(db.String(500), nullable=False)
 
 def get_data(start_date, end_date):
     # インデックスのティッカーシンボル
@@ -255,7 +254,7 @@ def calculate_hedge_ratios(returns, lookback_days, optimize_weights_flag, select
                         hedge_ratios.loc[current_date, asset] = 0.0
 
     # 欠損値を前日の値で埋める
-    hedge_ratios = hedge_ratios.fillna(method='ffill')
+    hedge_ratios = hedge_ratios.ffill().infer_objects()
 
     # 最初の行がNaNの場合はゼロで埋める
     hedge_ratios = hedge_ratios.fillna(0)
@@ -309,13 +308,6 @@ def investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settleme
     swaps_long_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_long'].items()}
     swaps_short_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_short'].items()}
     
-    # 以下、既存のコードは同じ
-    
-    # コストをUSDに変換
-    spreads_usd = {asset: value / usdjpy_rate for asset, value in costs['spreads'].items()}
-    swaps_long_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_long'].items()}
-    swaps_short_usd = {asset: value / usdjpy_rate for asset, value in costs['swaps_short'].items()}
-    
     # リターン計算
     daily_returns = price_data.pct_change().dropna()
 
@@ -323,7 +315,7 @@ def investment_simulation(price_data, hedge_ratios, costs, usdjpy_rate, settleme
     if settlement_frequency == 'quarterly':
         settlement_periods = pd.date_range(daily_returns.index[0], daily_returns.index[-1], freq='Q')
     elif settlement_frequency == 'monthly':
-        settlement_periods = pd.date_range(daily_returns.index[0], daily_returns.index[-1], freq='M')
+        settlement_periods = pd.date_range(daily_returns.index[0], daily_returns.index[-1], freq='ME')  # 'ME'を使用
     else:
         settlement_periods = pd.date_range(daily_returns.index[0], daily_returns.index[-1], freq='Q')
         
@@ -482,11 +474,6 @@ def investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min
     swaps_long = costs['swaps_long'] 
     swaps_short = costs['swaps_short']
     
-    # スプレッドとスワップコスト
-    spreads = costs['spreads']
-    swaps_long = costs['swaps_long'] 
-    swaps_short = costs['swaps_short']
-
     # ヘッジ資産
     hedge_assets = hedge_ratios.columns
 
@@ -543,7 +530,7 @@ def investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min
         if settlement_frequency == 'quarterly':
             settlement_periods = pd.date_range(price_data.index[0], price_data.index[-1], freq='Q')
         elif settlement_frequency == 'monthly':
-            settlement_periods = pd.date_range(price_data.index[0], price_data.index[-1], freq='M')
+            settlement_periods = pd.date_range(price_data.index[0], price_data.index[-1], freq='ME')  # 'ME'を使用
         else:
             settlement_periods = pd.date_range(price_data.index[0], price_data.index[-1], freq='Q')
 
@@ -747,6 +734,12 @@ def investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min
         }
         simulation_results.append(final_metrics)
 
+    # シミュレーション終了後のメモリ解放
+    del price_data
+    del hedge_ratios
+    del costs
+    gc.collect()
+
     # 全シミュレーション結果の保存
     results_df = pd.DataFrame(simulation_results)
     results_df.to_csv(os.path.join(save_directory, "simulation_results.csv"), index=False)
@@ -761,6 +754,21 @@ def investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min
         update_log(f"最終有効証拠金: {best_result['Final Usable Margin']:.2f} USD")
     else:
         update_log("\n有効な結果が見つかりませんでした。")
+
+def clean_output_directory():
+    """static/output ディレクトリ内のすべてのファイルとサブディレクトリを削除"""
+    try:
+        for item in os.listdir(OUTPUT_FOLDER):
+            item_path = os.path.join(OUTPUT_FOLDER, item)
+            if os.path.isfile(item_path) or os.path.islink(item_path):
+                os.unlink(item_path)  # ファイルやシンボリックリンクを削除
+                print(f"Deleted file: {item_path}")
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)  # ディレクトリを削除
+                print(f"Deleted directory: {item_path}")
+    except Exception as e:
+        print(f"出力ディレクトリのクリーンアップ中にエラーが発生しました: {e}")
+        traceback.print_exc()
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -795,24 +803,27 @@ def index():
 
         if submit_action == 'save':
             try:
+                # 基本パラメータの取得
                 start_date = request.form.get('start_date', '2000-01-01')
                 end_date = request.form.get('end_date', (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'))
                 period = request.form.get('period', '3か月')
                 optimize_weights_flag = True if request.form.get('optimize_weights') == 'on' else False
-
                 selected_indices = request.form.getlist('indices')
-                costs_spread = request.form.getlist('spread')
-                costs_swaps_long = request.form.getlist('swap_long')
-                costs_swaps_short = request.form.getlist('swap_short')
                 setting_name = request.form.get('setting_name', 'default')
 
+                # シミュレーション2のパラメータを取得
                 initial_margin = float(request.form.get('initial_margin', '2000'))
                 min_lot = float(request.form.get('min_lot', '0.10'))
-                max_lot = float(request.form.get('max_lot', '0.15'))
+                max_lot_desktop = float(request.form.get('max_lot', '0.15'))
+                max_lot_mobile = float(request.form.get('max_lot_mobile', '0.15'))
+                max_lot = max(max_lot_desktop, max_lot_mobile)  # デスクトップとモバイルの最大値を使用
                 handle_small_hedge = request.form.get('handle_small_hedge', 'short')
                 settlement_frequency = request.form.get('settlement_frequency', 'monthly')
 
+                # 資産名のリスト
                 asset_names = ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX']
+                
+                # コストと設定の初期化
                 costs = {
                     'spreads': {},
                     'swaps_long': {},
@@ -821,24 +832,28 @@ def index():
                     'contract_size': {}
                 }
 
-                for i, asset in enumerate(asset_names):
+                # 各資産のコストと設定を取得
+                for asset in asset_names:
                     try:
-                        costs['spreads'][asset] = float(costs_spread[i])
-                        costs['swaps_long'][asset] = float(costs_swaps_long[i])
-                        costs['swaps_short'][asset] = float(costs_swaps_short[i])
-                    except (IndexError, ValueError):
+                        # スプレッドとスワップを取得
+                        costs['spreads'][asset] = float(request.form.get(f'spread_{asset}', 0))
+                        costs['swaps_long'][asset] = float(request.form.get(f'swap_long_{asset}', 0))
+                        costs['swaps_short'][asset] = float(request.form.get(f'swap_short_{asset}', 0))
+                        
+                        # レバレッジと契約サイズを取得
+                        costs['leverage'][asset] = float(request.form.get(f'leverage_{asset}', 
+                                                                       100 if asset == 'VIX' else 200))
+                        costs['contract_size'][asset] = float(request.form.get(f'contract_size_{asset}',
+                                                                            100 if asset == 'VIX' else 1))
+                    except (TypeError, ValueError):
+                        flash(f'{asset}のパラメータが無効です。デフォルト値を使用します。')
                         costs['spreads'][asset] = 0.0
                         costs['swaps_long'][asset] = 0.0
                         costs['swaps_short'][asset] = 0.0
+                        costs['leverage'][asset] = 100.0 if asset == 'VIX' else 200.0
+                        costs['contract_size'][asset] = 100.0 if asset == 'VIX' else 1.0
 
-                    try:
-                        costs['leverage'][asset] = float(request.form.get(f'leverage_{asset}'))
-                        costs['contract_size'][asset] = float(request.form.get(f'contract_size_{asset}'))
-                    except (TypeError, ValueError):
-                        flash(f'{asset}のレバレッジまたは契約サイズが無効です。デフォルト値を使用します。')
-                        costs['leverage'][asset] = 200.0 if asset != 'VIX' else 100.0
-                        costs['contract_size'][asset] = 1.0 if asset != 'VIX' else 100.0
-
+                # 既存の設定を更新または新規作成
                 existing_setting = UserSetting.query.filter_by(name=setting_name).first()
                 if existing_setting:
                     existing_setting.start_date = start_date
@@ -884,23 +899,36 @@ def index():
 
         elif submit_action == 'analyze':
             try:
+                # デバイスの判定
+                user_agent_str = request.headers.get('User-Agent')
+                user_agent = parse(user_agent_str)
+                is_mobile = user_agent.is_mobile
+
+                # 基本パラメータの取得
                 start_date = request.form.get('start_date', '2000-01-01')
                 end_date = request.form.get('end_date', (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'))
                 period = request.form.get('period', '3か月')
                 optimize_weights_flag = True if request.form.get('optimize_weights') == 'on' else False
-
                 selected_indices = request.form.getlist('indices')
-                costs_spread = request.form.getlist('spread')
-                costs_swaps_long = request.form.getlist('swap_long')
-                costs_swaps_short = request.form.getlist('swap_short')
 
+                # シミュレーション2のパラメータを取得
                 initial_margin = float(request.form.get('initial_margin', '2000'))
                 min_lot = float(request.form.get('min_lot', '0.10'))
                 max_lot = float(request.form.get('max_lot', '0.15'))
                 handle_small_hedge = request.form.get('handle_small_hedge', 'short')
                 settlement_frequency = request.form.get('settlement_frequency', 'monthly')
 
+                print("Investment Simulation 2 Parameters:")
+                print(f"Initial Margin: {initial_margin}")
+                print(f"Min Lot: {min_lot}")
+                print(f"Max Lot: {max_lot}")
+                print(f"Handle Small Hedge: {handle_small_hedge}")
+                print(f"Settlement Frequency: {settlement_frequency}")
+
+                # 資産名のリスト
                 asset_names = ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX']
+                
+                # コストと設定の初期化
                 costs = {
                     'spreads': {},
                     'swaps_long': {},
@@ -909,24 +937,54 @@ def index():
                     'contract_size': {}
                 }
 
-                for i, asset in enumerate(asset_names):
+                # 各資産のコストと設定を取得
+                for asset in asset_names:
                     try:
-                        costs['spreads'][asset] = float(costs_spread[i])
-                        costs['swaps_long'][asset] = float(costs_swaps_long[i])
-                        costs['swaps_short'][asset] = float(costs_swaps_short[i])
-                    except (IndexError, ValueError):
+                         # デスクトップかモバイルの値を取得
+                         if is_mobile:
+                             spread_value = float(request.form.get(f'spread_{asset}_mobile') or 0)
+                             swap_long_value = float(request.form.get(f'swap_long_{asset}_mobile') or 0)
+                             swap_short_value = float(request.form.get(f'swap_short_{asset}_mobile') or 0)
+                             leverage_value = float(request.form.get(f'leverage_{asset}_mobile') or 
+                                                 (100 if asset == 'VIX' else 200))
+                             contract_size_value = float(request.form.get(f'contract_size_{asset}_mobile') or 
+                                                     (100 if asset == 'VIX' else 1))
+                         else:
+                             spread_value = float(request.form.get(f'spread_{asset}') or 0)
+                             swap_long_value = float(request.form.get(f'swap_long_{asset}') or 0)
+                             swap_short_value = float(request.form.get(f'swap_short_{asset}') or 0)
+                             leverage_value = float(request.form.get(f'leverage_{asset}') or 
+                                                 (100 if asset == 'VIX' else 200))
+                             contract_size_value = float(request.form.get(f'contract_size_{asset}') or 
+                                                     (100 if asset == 'VIX' else 1))
+
+                         costs['spreads'][asset] = spread_value
+                         costs['swaps_long'][asset] = swap_long_value
+                         costs['swaps_short'][asset] = swap_short_value
+                         costs['leverage'][asset] = leverage_value
+                         costs['contract_size'][asset] = contract_size_value
+
+                         # デバッグ用ログ出力
+                         print(f"{asset} settings:")
+                         print(f"  Spread: {spread_value}")
+                         print(f"  Swap Long: {swap_long_value}")
+                         print(f"  Swap Short: {swap_short_value}")
+                         print(f"  Leverage: {leverage_value}")
+                         print(f"  Contract Size: {contract_size_value}")
+                         
+                    except (TypeError, ValueError) as e:
+                        print(f"Error processing {asset}: {str(e)}")
+                        flash(f'{asset}のパラメータが無効です。デフォルト値を使用します。')
                         costs['spreads'][asset] = 0.0
                         costs['swaps_long'][asset] = 0.0
                         costs['swaps_short'][asset] = 0.0
+                        costs['leverage'][asset] = 100.0 if asset == 'VIX' else 200.0
+                        costs['contract_size'][asset] = 100.0 if asset == 'VIX' else 1.0
 
-                    try:
-                        costs['leverage'][asset] = float(request.form.get(f'leverage_{asset}'))
-                        costs['contract_size'][asset] = float(request.form.get(f'contract_size_{asset}'))
-                    except (TypeError, ValueError):
-                        flash(f'{asset}のレバレッジまたは契約サイズが無効です。デフォルト値を使用します。')
-                        costs['leverage'][asset] = 200.0 if asset != 'VIX' else 100.0
-                        costs['contract_size'][asset] = 1.0 if asset != 'VIX' else 100.0
+                # シミュレーション実行前に出力ディレクトリをクリーンアップ
+                clean_output_directory()
 
+                # デバッグ用ログ出力
                 socketio.emit('log', {'message': 'データの取得を開始します...'})
                 price_data, returns, usdjpy_rate = get_data(start_date, end_date)
 
@@ -959,8 +1017,18 @@ def index():
                     socketio.emit('log', {'message': message})
 
                 socketio.emit('log', {'message': '投資シミュレーション2を開始します...'})
-                investment_simulation_2(price_data, hedge_ratios, costs, initial_margin, min_lot, max_lot, 
-                                     handle_small_hedge, settlement_frequency, OUTPUT_FOLDER, log_callback)
+                investment_simulation_2(
+                    price_data=price_data,
+                    hedge_ratios=hedge_ratios,
+                    costs=costs,
+                    initial_margin=initial_margin,
+                    min_lot=min_lot,
+                    max_lot=max_lot,
+                    handle_small_hedge=handle_small_hedge,
+                    settlement_frequency=settlement_frequency,
+                    save_directory=OUTPUT_FOLDER,
+                    update_log=log_callback
+                )
 
                 socketio.emit('log', {'message': '分析とシミュレーションが完了しました。'})
                 return jsonify({'redirect': url_for('results')})
@@ -1128,21 +1196,21 @@ def download_lot_results(lot_size):
 
 @socketio.on('start_analysis', namespace='/analysis')
 def handle_analysis(data):
-   try:
-       def log_callback(message):
-           emit('log', {'message': message}, namespace='/analysis')
+    try:
+        def log_callback(message):
+            emit('log', {'message': message}, namespace='/analysis')
 
-       investment_simulation_2(data['price_data'], data['hedge_ratios'], 
-                             data['costs'], data['initial_margin'], 
-                             data['min_lot'], data['max_lot'], 
-                             data['handle_small_hedge'], 
-                             data['settlement_frequency'], 
-                             data['save_directory'], 
-                             log_callback)
+        investment_simulation_2(data['price_data'], data['hedge_ratios'], 
+                              data['costs'], data['initial_margin'], 
+                              data['min_lot'], data['max_lot'], 
+                              data['handle_small_hedge'], 
+                              data['settlement_frequency'], 
+                              data['save_directory'], 
+                              log_callback)
                              
-       emit('analysis_complete', {'status': 'success'}, namespace='/analysis')
-   except Exception as e:
-       emit('analysis_error', {'error': str(e)}, namespace='/analysis')
+        emit('analysis_complete', {'status': 'success'}, namespace='/analysis')
+    except Exception as e:
+        emit('analysis_error', {'error': str(e)}, namespace='/analysis')
 
 if __name__ == '__main__':
     with app.app_context():
