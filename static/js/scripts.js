@@ -1,29 +1,29 @@
 $(document).ready(function(){
     // アニメーション初期化
     $('.form-section, .results-container').addClass('animate-fade-in');
-
+ 
     // Socket.IOの接続を設定
     var socket = io.connect(window.location.protocol + '//' + document.domain + ':' + location.port + '/logs');
-
+ 
     socket.on('connect', function() {
         console.log('SocketIO Connected');
     });
-
+ 
     socket.on('error', function(error) {
         console.log('SocketIO Error:', error);
     });
-
+ 
     // デバイスの判定
     function isMobile() {
         return window.innerWidth <= 768;
     }
-
+ 
     // カレンダーの初期化と位置設定
     function initializeDatepicker(element) {
         let $input = $(element);
         let position = $input.offset();
         let inputHeight = $input.outerHeight();
-
+ 
         $(element).datepicker({
             format: 'yyyy-mm-dd',
             autoclose: true,
@@ -45,12 +45,12 @@ $(document).ready(function(){
             }
         });
     }
-
+ 
     // 各日付入力フィールドにカレンダーを初期化
     $('.datepicker').each(function() {
         initializeDatepicker(this);
     });
-
+ 
     // ウィンドウリサイズ時の再初期化
     let resizeTimer;
     $(window).resize(function() {
@@ -62,22 +62,50 @@ $(document).ready(function(){
             });
         }, 250);
     });
-
+ 
     // フォームの送信をAjax化
     $('#mainForm').on('submit', function(e) {
-        e.preventDefault(); // デフォルトのフォーム送信を防止
-
+        e.preventDefault();
+ 
+        // フォームデータを作成する前にコンソールで値を確認
+        const formValues = {
+            initial_margin: $('#initial_margin').val(),
+            min_lot: $('#min_lot').val(),
+            max_lot: $('#max_lot').val(),
+            handle_small_hedge: $('#handle_small_hedge').val(),
+            settlement_frequency: $('#settlement_frequency').val()
+        };
+        console.log("Form Values before FormData:", formValues);
+ 
         var formData = new FormData(this);
         var submitAction = $('button[type="submit"]:focus').val();
         formData.append('submit_action', submitAction);
-
+ 
+        // フォームデータの内容を確認
+        console.log("Complete FormData entries:");
+        for (var pair of formData.entries()) {
+            console.log(pair[0] + ': ' + pair[1]);
+        }
+ 
+        // スプレッド、スワップ、レバレッジ、契約サイズの値を確認
+        const assetNames = ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX'];
+        console.log("Asset-specific values:");
+        assetNames.forEach(asset => {
+            console.log(`${asset}:`);
+            console.log(`  spread_${asset}: ${formData.get('spread_' + asset)}`);
+            console.log(`  swap_long_${asset}: ${formData.get('swap_long_' + asset)}`);
+            console.log(`  swap_short_${asset}: ${formData.get('swap_short_' + asset)}`);
+            console.log(`  leverage_${asset}: ${formData.get('leverage_' + asset)}`);
+            console.log(`  contract_size_${asset}: ${formData.get('contract_size_' + asset)}`);
+        });
+ 
         if (submitAction === 'analyze') {
             // 分析実行ボタンのスピナー表示
             const submitBtn = $('button[name="submit_action"][value="analyze"]');
             submitBtn.prop('disabled', true)
                     .find('.spinner-border')
                     .removeClass('d-none');
-
+ 
             $.ajax({
                 url: '/index',
                 type: 'POST',
@@ -85,11 +113,15 @@ $(document).ready(function(){
                 processData: false,
                 contentType: false,
                 success: function(response) {
+                    console.log("Server Response:", response);
                     if (response.redirect) {
                         window.location.href = response.redirect;
                     }
                 },
                 error: function(xhr, status, error) {
+                    console.error("Ajax Error:", error);
+                    console.error("Status:", status);
+                    console.error("Response:", xhr.responseText);
                     showNotification('エラーが発生しました: ' + error, 'error');
                 },
                 complete: function() {
@@ -114,7 +146,7 @@ $(document).ready(function(){
             });
         }
     });
-
+ 
     // 設定のロード処理
     $('.load-setting').click(function(e) {
         e.preventDefault();
@@ -123,7 +155,7 @@ $(document).ready(function(){
         
         // ロードボタンをスピナー表示に変更
         loadingBtn.html('<span class="spinner-border spinner-border-sm"></span> ロード中');
-
+ 
         $.ajax({
             url: `/load_setting/${settingId}`,
             type: 'GET',
@@ -144,9 +176,11 @@ $(document).ready(function(){
             }
         });
     });
-
+ 
     // フォームフィールドの更新
     function updateFormFields(data) {
+        console.log("Received data for form update:", data);
+ 
         // 日付の設定
         $('#start_date').val(data.start_date);
         $('#end_date').val(data.end_date);
@@ -158,28 +192,19 @@ $(document).ready(function(){
         });
         
         // コストの設定
+        const assetNames = ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX'];
         const spreads = data.spreads.map(Number);
         const swapsLong = data.swaps_long.map(Number);
         const swapsShort = data.swaps_short.map(Number);
         
-        $('input[name="spread"]').each((index, element) => {
+        assetNames.forEach((asset, index) => {
             if (index < spreads.length) {
-                $(element).val(spreads[index]);
+                $(`input[name="spread_${asset}"]`).val(spreads[index]);
+                $(`input[name="swap_long_${asset}"]`).val(swapsLong[index]);
+                $(`input[name="swap_short_${asset}"]`).val(swapsShort[index]);
             }
         });
-        
-        $('input[name="swap_long"]').each((index, element) => {
-            if (index < swapsLong.length) {
-                $(element).val(swapsLong[index]);
-            }
-        });
-        
-        $('input[name="swap_short"]').each((index, element) => {
-            if (index < swapsShort.length) {
-                $(element).val(swapsShort[index]);
-            }
-        });
-
+ 
         // レバレッジと契約サイズの設定
         const leverage = data.leverage;
         const contract_size = data.contract_size;
@@ -198,8 +223,26 @@ $(document).ready(function(){
         $('#settlement_frequency').val(data.settlement_frequency);
         $('#optimize_weights').prop('checked', data.optimize_weights);
         $('#setting_name').val(data.name);
+ 
+        // 更新された値をログ出力
+        console.log("Updated form values:");
+        console.log("Initial Margin:", $('#initial_margin').val());
+        console.log("Min Lot:", $('#min_lot').val());
+        console.log("Max Lot:", $('#max_lot').val());
+        console.log("Handle Small Hedge:", $('#handle_small_hedge').val());
+        console.log("Settlement Frequency:", $('#settlement_frequency').val());
+ 
+        // 資産ごとの値をログ出力
+        assetNames.forEach(asset => {
+            console.log(`${asset} values:`);
+            console.log(`  Spread: ${$(`input[name="spread_${asset}"]`).val()}`);
+            console.log(`  Swap Long: ${$(`input[name="swap_long_${asset}"]`).val()}`);
+            console.log(`  Swap Short: ${$(`input[name="swap_short_${asset}"]`).val()}`);
+            console.log(`  Leverage: ${$(`input[name="leverage_${asset}"]`).val()}`);
+            console.log(`  Contract Size: ${$(`input[name="contract_size_${asset}"]`).val()}`);
+        });
     }
-
+ 
     // 通知表示
     function showNotification(message, type) {
         const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
@@ -213,7 +256,7 @@ $(document).ready(function(){
         $('.container').prepend(alert);
         setTimeout(() => alert.alert('close'), 5000);
     }
-
+ 
     // 設定の削除処理
     $('#delete_setting_btn').click(function(e) {
         e.preventDefault();
@@ -228,7 +271,7 @@ $(document).ready(function(){
             const btn = $(this);
             // 削除ボタンをスピナー表示に変更
             btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> 削除中');
-
+ 
             $.ajax({
                 url: `/delete_setting/${settingId}`,
                 type: 'POST',
@@ -249,10 +292,10 @@ $(document).ready(function(){
             });
         }
     });
-
+ 
     // ツールチップの初期化
     $('[data-toggle="tooltip"]').tooltip();
-
+ 
     // スムーズスクロール
     $('a[href^="#"]').on('click', function(e) {
         e.preventDefault();
@@ -263,7 +306,7 @@ $(document).ready(function(){
             }, 500);
         }
     });
-
+ 
     // 各ロットサイズのヘッジロットデータを読み込む関数
     function loadHedgeLotsData(lotSize) {
         $.ajax({
@@ -306,27 +349,62 @@ $(document).ready(function(){
             }
         });
     }
-
+ 
     // 全てのロットサイズのデータを読み込む
     if (typeof lot_sizes !== 'undefined') {
         lot_sizes.forEach(lotSize => {
             loadHedgeLotsData(lotSize);
         });
     }
+ 
+// 30秒ごとにデータを更新
+setInterval(function() {
+    if (typeof lot_sizes !== 'undefined') {
+        lot_sizes.forEach(lotSize => {
+            loadHedgeLotsData(lotSize);
+        });
+    }
+}, 30000);
 
-    // 30秒ごとにデータを更新
-    setInterval(function() {
-        if (typeof lot_sizes !== 'undefined') {
-            lot_sizes.forEach(lotSize => {
-                loadHedgeLotsData(lotSize);
-            });
-        }
-    }, 30000);
+// ソケット接続でリアルタイムデータを受信した時の処理
+socket.on('hedge_lots_update', function(data) {
+    if (data.lot_size) {
+        loadHedgeLotsData(data.lot_size);
+    }
+});
 
-    // ソケット接続でリアルタイムデータを受信した時の処理
-    socket.on('hedge_lots_update', function(data) {
-        if (data.lot_size) {
-            loadHedgeLotsData(data.lot_size);
-        }
+// フォームの変更を監視し、値の変更をログ出力
+$('.form-control').on('change', function() {
+    const $this = $(this);
+    console.log(`Form field changed: ${$this.attr('name')} = ${$this.val()}`);
+});
+
+// フォーム送信前の値の検証
+$('#mainForm').on('submit', function(e) {
+    const formData = new FormData(this);
+    console.log('Form submission values:');
+    for (const [key, value] of formData.entries()) {
+        console.log(`${key}: ${value}`);
+    }
+});
+
+// ページ読み込み時の初期値をログ出力
+$(document).ready(function() {
+    console.log('Initial form values:');
+    console.log('Initial Margin:', $('#initial_margin').val());
+    console.log('Min Lot:', $('#min_lot').val());
+    console.log('Max Lot:', $('#max_lot').val());
+    console.log('Handle Small Hedge:', $('#handle_small_hedge').val());
+    console.log('Settlement Frequency:', $('#settlement_frequency').val());
+
+    const assetNames = ['SP500', 'Nikkei', 'EuroStoxx', 'FTSE', 'DowJones', 'AUS200', 'HK50', 'SMI20', 'VIX'];
+    assetNames.forEach(asset => {
+        console.log(`${asset}:`);
+        console.log(`  spread_${asset}: ${$(`input[name="spread_${asset}"]`).val()}`);
+        console.log(`  swap_long_${asset}: ${$(`input[name="swap_long_${asset}"]`).val()}`);
+        console.log(`  swap_short_${asset}: ${$(`input[name="swap_short_${asset}"]`).val()}`);
+        console.log(`  leverage_${asset}: ${$(`input[name="leverage_${asset}"]`).val()}`);
+        console.log(`  contract_size_${asset}: ${$(`input[name="contract_size_${asset}"]`).val()}`);
     });
+});
 });
